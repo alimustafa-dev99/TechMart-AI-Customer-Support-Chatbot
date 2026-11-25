@@ -1,0 +1,11 @@
+langchain
+langchain_google_genai
+dotenv
+langchain-community
+langchain-tavily 
+streamlit
+langgraph
+pypdf
+langchain-text-splitters
+langchain-chroma
+pathlib
