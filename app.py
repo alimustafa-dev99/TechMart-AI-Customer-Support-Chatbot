@@ -16,17 +16,26 @@ load_dotenv()
 
 
 def get_google_api_key() -> str | None:
-    """Read GOOGLE_API_KEY from Streamlit Secrets first, then environment variables."""
-    try:
-        if "GOOGLE_API_KEY" in st.secrets and st.secrets["GOOGLE_API_KEY"]:
-            key = str(st.secrets["GOOGLE_API_KEY"]).strip()
-            os.environ["GOOGLE_API_KEY"] = key
-            return key
-    except Exception:
-        pass
+    """Read GOOGLE_API_KEY or GEMINI_API_KEY from Streamlit Secrets or env."""
+    for key_name in ("GOOGLE_API_KEY", "GEMINI_API_KEY"):
+        try:
+            if key_name in st.secrets and st.secrets[key_name]:
+                key = str(st.secrets[key_name]).strip()
+                if key:
+                    os.environ["GOOGLE_API_KEY"] = key
+                    os.environ["GEMINI_API_KEY"] = key
+                    return key
+        except Exception:
+            pass
 
-    env_key = os.getenv("GOOGLE_API_KEY")
-    return env_key.strip() if env_key else None
+    env_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if env_key and env_key.strip():
+        key = env_key.strip()
+        os.environ["GOOGLE_API_KEY"] = key
+        os.environ["GEMINI_API_KEY"] = key
+        return key
+
+    return None
 
 
 PDF_PATH = "data/TechMart Customer Support Guidebook.pdf"
