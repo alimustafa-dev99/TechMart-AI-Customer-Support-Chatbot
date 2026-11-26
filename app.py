@@ -38,7 +38,7 @@ def get_google_api_key() -> str | None:
     return None
 
 
-PDF_PATH = "data/TechMart Customer Support Guidebook.pdf"
+PDF_PATH = "data/TechMart Complete Unified Customer Support & RAG Knowledge Base.pdf"
 DB_PATH = "/tmp/techmart_store_db"
 
 st.set_page_config(page_title="TechMart Support - Alex", page_icon="🛒")
