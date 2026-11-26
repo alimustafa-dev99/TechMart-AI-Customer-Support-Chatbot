@@ -1,13 +1,7 @@
 import os
 import warnings
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 from dotenv import load_dotenv
-import streamlit as st
-
-load_dotenv()
-
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.messages import AIMessage, HumanMessage
@@ -15,37 +9,83 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+import streamlit as st
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+load_dotenv()
+
+
+def get_google_api_key() -> str | None:
+    """Read GOOGLE_API_KEY from Streamlit Secrets first, then environment variables."""
+    try:
+        if "GOOGLE_API_KEY" in st.secrets and st.secrets["GOOGLE_API_KEY"]:
+            key = str(st.secrets["GOOGLE_API_KEY"]).strip()
+            os.environ["GOOGLE_API_KEY"] = key
+            return key
+    except Exception:
+        pass
+
+    env_key = os.getenv("GOOGLE_API_KEY")
+    return env_key.strip() if env_key else None
+
 
 PDF_PATH = "data/TechMart Customer Support Guidebook.pdf"
-DB_PATH = "/data/store_db"
+DB_PATH = "/tmp/techmart_store_db"
 
 st.set_page_config(page_title="TechMart Support - Alex", page_icon="🛒")
 st.title("🛒 TechMart Support (Alex)")
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading TechMart knowledge base...")
 def load_rag():
-    llm = ChatGoogleGenerativeAI(model="gemini-3.5-flash-lite", temperature=0.2)
-    embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001")
+    api_key = get_google_api_key()
+    if not api_key:
+        raise ValueError(
+            "GOOGLE_API_KEY is missing. Add GOOGLE_API_KEY to Streamlit Secrets or your .env file."
+        )
 
-    # Load existing Chroma DB if built; otherwise build it once from the PDF
-    if os.path.exists(DB_PATH) and os.listdir(DB_PATH):
-        store = Chroma(persist_directory=DB_PATH, embedding_function=embeddings)
+    if not os.path.exists(PDF_PATH):
+        raise FileNotFoundError(f"PDF guidebook not found at: {PDF_PATH}")
+
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-3.5-flash-lite",
+        temperature=0.2,
+        api_key=api_key,
+    )
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="gemini-embedding-001",
+        api_key=api_key,
+    )
+
+    os.makedirs(DB_PATH, exist_ok=True)
+
+    # Load existing Chroma DB if already built; otherwise index the PDF once
+    if os.listdir(DB_PATH):
+        store = Chroma(
+            persist_directory=DB_PATH,
+            embedding_function=embeddings,
+            collection_name="techmart_guidebook",
+        )
     else:
         loader = PyPDFLoader(file_path=PDF_PATH)
         docs = loader.load()
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        splitted_doc = splitter.split_documents(docs)
+        splitted_docs = splitter.split_documents(docs)
         store = Chroma.from_documents(
-            documents=splitted_doc,
+            documents=splitted_docs,
             embedding=embeddings,
             persist_directory=DB_PATH,
+            collection_name="techmart_guidebook",
         )
 
     return llm, store
 
 
-llm, store = load_rag()
+try:
+    llm, store = load_rag()
+except Exception as exc:
+    st.error(f"Startup failed: {exc}")
+    st.stop()
 
 # Rewrite follow-up questions using conversation history
 rewrite_prompt = ChatPromptTemplate.from_messages([
@@ -82,7 +122,7 @@ Guidelines:
 ])
 qa_chain = qa_prompt | llm | StrOutputParser()
 
-# 1. Clear session state initialization
+# 1. Session state initialization
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -97,32 +137,44 @@ for msg in st.session_state.messages:
 
 # 3. Chat input & real-time streaming response
 if query := st.chat_input("Ask Alex about TechMart products, prices, or policies..."):
+    clean_query = query.strip()
+    if not clean_query:
+        st.stop()
+
     # Build LangChain history (last 8 messages = 4 turns)
     chat_history = [
         HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"])
         for m in st.session_state.messages[-8:]
     ]
 
-    st.session_state.messages.append({"role": "user", "content": query})
+    st.session_state.messages.append({"role": "user", "content": clean_query})
     with st.chat_message("user"):
-        st.markdown(query)
+        st.markdown(clean_query)
 
-    # Rewrite follow-up query if history exists
-    search_query = (
-        rewrite_chain.invoke({"chat_history": chat_history, "query": query}).strip()
-        if chat_history
-        else query
-    )
-    docs = store.similarity_search(search_query, k=3)
-    context = "\n\n".join(doc.page_content for doc in docs)
+    # Rewrite follow-up query if history exists, falling back to clean_query if blank
+    search_query = clean_query
+    if chat_history:
+        try:
+            rewritten = rewrite_chain.invoke({"chat_history": chat_history, "query": clean_query}).strip()
+            if rewritten:
+                search_query = rewritten
+        except Exception:
+            search_query = clean_query
 
-    with st.chat_message("assistant"):
-        full_response = st.write_stream(
-            qa_chain.stream({
-                "chat_history": chat_history,
-                "context": context,
-                "query": query,
-            })
-        )
+    try:
+        docs = store.similarity_search(search_query, k=3)
+        context = "\n\n".join(doc.page_content for doc in docs)
 
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
+        with st.chat_message("assistant"):
+            full_response = st.write_stream(
+                qa_chain.stream({
+                    "chat_history": chat_history,
+                    "context": context,
+                    "query": clean_query,
+                })
+            )
+
+        response_text = full_response if isinstance(full_response, str) else str(full_response or "")
+        st.session_state.messages.append({"role": "assistant", "content": response_text})
+    except Exception as exc:
+        st.error(f"Could not generate a response: {exc}")
