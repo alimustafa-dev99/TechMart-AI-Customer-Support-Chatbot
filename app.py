@@ -16,8 +16,8 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-PDF_PATH = "c:/gen ai internship/4th project/data/TechMart Customer Support Guidebook.pdf"
-DB_PATH = "c:/gen ai internship/4th project/data/store_db"
+PDF_PATH = "data/TechMart Customer Support Guidebook.pdf"
+DB_PATH = "/data/store_db"
 
 st.set_page_config(page_title="TechMart Support - Alex", page_icon="🛒")
 st.title("🛒 TechMart Support (Alex)")
